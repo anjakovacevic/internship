@@ -60,7 +60,7 @@ int main()
         // Load face detection and pose estimation models.
         frontal_face_detector detector = get_frontal_face_detector();
         shape_predictor pose_model;
-        deserialize("C:/Users/anja.kovacevic/datasets_and_models/shape_predictor_68_face_landmarks.dat") >> pose_model;
+        deserialize("C:/Users/Anja/Desktop/shape_predictor_68_face_landmarks.dat") >> pose_model;
 
         // Grab and process frames until the main window is closed by the user.
         while (!win.is_closed())

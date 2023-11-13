@@ -8,7 +8,7 @@ add_executable( project main.cpp )
 set_property( DIRECTORY PROPERTY VS_STARTUP_PROJECT "project" )
 
 # Find Package
-set( OpenCV_DIR "C:/Users/anja.kovacevic/opencv/build" )
+set( OpenCV_DIR "C:/Users/Anja/opencv/build" )
 option( OpenCV_STATIC OFF )
 find_package( OpenCV REQUIRED )
 
