@@ -14,6 +14,7 @@ import subprocess
 # from test import test
 import util
 
+
 class App:
     def __init__(self):
         self.main_window = tk.Tk()
@@ -50,7 +51,7 @@ class App:
 
     def add_webcam(self, label):
         if 'cap' not in self.__dict__:
-            self.cap = cv2.VideoCapture(0)
+            self.cap = cv2.VideoCapture(1)
         
         self._label = label
         self.process_webcam()
