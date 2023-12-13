@@ -13,12 +13,14 @@ import imutils
 import mediapipe as mp
 import cv2
 import argparse
+import pygame
+import sys
 
 from ITrackerModel import ITrackerModel
 
-CHECKPOINTS_PATH = './fix'
-# CHECKPOINTS_PATH = './og'
-# CHECKPOINTS_PATH = './anja'
+CHECKPOINTS_PATH = 'C:/Users/Anja/kod/fixing-gazecapture-master'
+# CHECKPOINTS_PATH = 'C:/Users/Anja/kod/GazeCapture-master/pytorch'
+# CHECKPOINTS_PATH = 'C:/Users/Anja/kod/gaze_drugi_laptop/zip'
 
 # from canonical_face_model_uv_visualization - Mediapipe incides for face mesh
 LEFT_EYE_INDICES = [33, 246, 161, 160, 159, 158, 157, 173, 243, 112, 26, 22, 23, 24, 110, 25]
@@ -29,8 +31,22 @@ eyeLeftMean = sio.loadmat('mean_left_224.mat', squeeze_me=True, struct_as_record
 eyeRightMean = sio.loadmat('mean_right_224.mat', squeeze_me=True, struct_as_record=False)['image_mean']
 one_size = 224
 
-class SubtractMean(object):
+pygame.init()
 
+window_size = (800, 600)
+screen = pygame.display.set_mode(window_size)
+pygame.display.set_caption("Gaze Tracking Dot")
+
+# Set up the dot
+dot_radius = 10
+dot_color = (255, 0, 0)  # Red color, you can adjust this
+dot_position = [0, 0]  # Initial position
+
+grey = (192, 192, 192)
+
+clock = pygame.time.Clock()
+
+class SubtractMean(object):
     def __init__(self, meanImg):
         self.meanImg = transforms.ToTensor()(meanImg / 255)
 
@@ -144,23 +160,113 @@ def get_all_detections(image):
         # cv2.imwrite("r_eye.jpg", roi_r_eye)
     face_mesh.close()
     
-    
     return roi_face, roi_l_eye, roi_r_eye, face_mask
+
+
+
+def headpose_est(frame):
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh(
+        static_image_mode=False,
+        refine_landmarks=True,
+        max_num_faces=2,
+        min_detection_confidence=0.5
+    )
+
+    # 3D face model
+    face_3d = np.array([
+        [0.0, 0.0, 0.0],            # Nose tip
+        [0.0, -330.0, -65.0],       # Chin
+        [-225.0, 170.0, -135.0],    # Left eye left corner
+        [225.0, 170.0, -135.0],     # Right eye right corner
+        [-150.0, -150.0, -125.0],   # Left Mouth corner
+        [150.0, -150.0, -125.0]     # Right mouth corner
+    ], dtype=np.float64)
+
+    # We need eye coords for drawing the headpose estimation
+    # Reposition left eye corner to be the origin
+    leye_3d = np.array(face_3d)
+    leye_3d[:,0] += 225
+    leye_3d[:,1] -= 175
+    leye_3d[:,2] += 135
+
+    # Reposition right eye corner to be the origin
+    reye_3d = np.array(face_3d)
+    reye_3d[:,0] -= 225
+    reye_3d[:,1] -= 175
+    reye_3d[:,2] += 135
+        
+    img_h, img_w, img_c = frame.shape
+    focal_length = 1 * img_w
+    cam_matrix = np.array([
+        [focal_length, 0, img_w / 2],
+        [0, focal_length, img_h / 2],
+        [0, 0, 1]
+    ])
+
+    dist_coeffs = np.zeros((4, 1), dtype=np.float64)
+    results = face_mesh.process(frame)
+
+    for face_landmarks in results.multi_face_landmarks:
+        face_2d = [(int(lm.x * img_w), int(lm.y * img_h)) for lm in face_landmarks.landmark]
+
+        # Get relevant landmarks for head pose estimation
+        face_2d_head = np.array([
+            face_2d[1],      # Nose
+            face_2d[199],    # Chin
+            face_2d[33],     # Left eye left corner
+            face_2d[263],    # Right eye right corner
+            face_2d[61],     # Left mouth corner
+            face_2d[291]     # Right mouth corner
+        ], dtype=np.float64)
+
+        # Solve PnP for left and right eyes
+        # slovePnP solves the Perspective-n-Point (PnP) problem. It estimates the pose of an object given its 3D coordinates 
+        # in the world (objectPoints) and their 2D coordinates in the image (imagePoints). 
+        # The output includes the rotation and translation vectors.
+        _, l_rvec, l_tvec = cv2.solvePnP(leye_3d, face_2d_head, cam_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
+        _, r_rvec, r_tvec = cv2.solvePnP(reye_3d, face_2d_head, cam_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
+
+        # Get rotational matrix from rotational vector
+        # Rodrigues function in OpenCV converts a rotation vector (rvec) into a rotation matrix (rmat). 
+        # It's commonly used to switch between the compact representation of 3D rotations.
+        l_rmat, _ = cv2.Rodrigues(l_rvec)
+        r_rmat, _ = cv2.Rodrigues(r_rvec)
+
+        # Draw axis of rotation for left eye
+        # This function projects 3D points (objectPoints) into 2D image points given the camera
+        # parameters (cameraMatrix, distCoeffs) and the pose of the object in the scene (rvec, tvec).
+        axis = np.float32([[-100, 0, 0], [0, 100, 0], [0, 0, 300]]).reshape(-1, 3)
+        l_axis, _ = cv2.projectPoints(axis, l_rvec, l_tvec, cam_matrix, dist_coeffs)
+        r_axis, _ = cv2.projectPoints(axis, r_rvec, r_tvec, cam_matrix, dist_coeffs)
+
+        # Draw the axis on the image
+        # ravel is used to flatten multi-dimensional arrays into a 1D array. 
+        cv2.line(frame, tuple(np.ravel(l_axis[0]).astype(np.int32)), tuple(np.ravel(l_axis[1]).astype(np.int32)), (0, 200, 0), 3)
+        cv2.line(frame, tuple(np.ravel(l_axis[1]).astype(np.int32)), tuple(np.ravel(l_axis[2]).astype(np.int32)), (0, 0, 200), 3)
+
+        cv2.line(frame, tuple(np.ravel(r_axis[0]).astype(np.int32)), tuple(np.ravel(r_axis[1]).astype(np.int32)), (0, 200, 0), 3)
+        cv2.line(frame, tuple(np.ravel(r_axis[1]).astype(np.int32)), tuple(np.ravel(r_axis[2]).astype(np.int32)), (0, 0, 200), 3)
 
 
 
 def test_webcam(model, id):
     video_capture = cv2.VideoCapture(id)
 
-    center = [int(one_size/2), int(one_size/2)]
     while (True):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
         ret, frame = video_capture.read()
         if not ret:
             print("Camera doesn't work.")
             break
+
+        frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+        frame.flags.writeable = False
         frame = imutils.resize(frame, width=500)
         data_from_frame = get_all_detections(frame)
-        # print(data_from_frame)
         
         eye_left, eye_right, roi_face, face_mask = data_from_frame
         # print(f"Type of eye_left: {type(eye_left)}, Type of eye_right: {type(eye_right)}, Type of roi_face: {type(roi_face)}")
@@ -177,8 +283,13 @@ def test_webcam(model, id):
         face_t = torch.unsqueeze(roi_face, 0)  
         face_mask_t = torch.FloatTensor(face_mask)
 
+        frame.flags.writeable = True
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
         output = model(face_t, eye_left_t, eye_right_t, face_mask_t)
-        predicted_pose = output.detach().cpu().numpy()
+        predicted_pose = output.detach().cpu().numpy()[0]
+
+        headpose_est(frame)
 
         # left_x, left_y, left_w, left_h = left_eye_bounding_box
         # right_x, right_y, right_w, right_h = right_eye_bounding_box
@@ -188,7 +299,27 @@ def test_webcam(model, id):
         # frame = cv2.resize(frame, (one_size, one_size))
         # frame = cv2.circle(frame, (center[0] + int(predicted_pose[0][0]), center[1] + int(predicted_pose[0][1])), 5, (0, 255, 0), -1)
         print(predicted_pose)
-            
+        
+        
+        x_gaze_min, x_gaze_max = -10, 14
+        y_gaze_min, y_gaze_max = -14, 14
+
+        pygame_x = int((-1*predicted_pose[0] - x_gaze_min) / (x_gaze_max - x_gaze_min) * window_size[0])
+        pygame_y = int((-1*predicted_pose[1] - y_gaze_min) / (y_gaze_max - y_gaze_min) * window_size[1])
+
+        # dot_position = [int((-1* predicted_pose[0] + 13) / (13 + 13) * window_size[0]), int((-1*predicted_pose[1] + 13) / (13 + 13) * window_size[1])]
+        dot_position = [pygame_x, pygame_y]
+        print(predicted_pose[0], predicted_pose[1], dot_position)
+        screen.fill((255, 255, 255))
+        pygame.draw.circle(screen, dot_color, dot_position, dot_radius)
+
+        # Draw thin grey lines for x and y axes
+        pygame.draw.line(screen, grey, (0, window_size[1] // 2), (window_size[0], window_size[1] // 2), 1)
+        pygame.draw.line(screen, grey, (window_size[0] // 2, 0), (window_size[0] // 2, window_size[1]), 1)
+
+        pygame.display.flip()
+        clock.tick(60)       
+
         cv2.imshow("Gaze point", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -236,4 +367,5 @@ if args.id == '1' or args.id == '0' or args.id == '2':
 else:
     id = args.id
     print(id)
+
 test_webcam(model, id)
