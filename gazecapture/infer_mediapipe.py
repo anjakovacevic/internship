@@ -140,28 +140,24 @@ def get_all_detections(image):
         
     img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = face_detection.process(img)
-    if results.detections:
+
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh()
+    results2 = face_mesh.process(img)
+
+    if results.detections and results2.multi_face_landmarks:
         face_bounding_box = get_face_boundaries(results.detections, image)
         x, y, w, h = face_bounding_box
         roi_face = image[y:y + h, x:x + w]
-        # cv2.imwrite("Face.jpg", roi_face)
-        
+        # Eyes
+        landmarks = results2.multi_face_landmarks[0]
+        roi_l_eye, roi_r_eye = get_roi_eyes(landmarks, image)
         # Face grid
         face_mask = getFaceGrid(image, (x, y, w, h))
-    
-    # Now the eyes
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh.FaceMesh()
-    results = face_mesh.process(img)
-    if results.multi_face_landmarks:
-        landmarks = results.multi_face_landmarks[0]
-        roi_l_eye, roi_r_eye = get_roi_eyes(landmarks, image)
-        # cv2.imwrite("l_eye.jpg", roi_l_eye)
-        # cv2.imwrite("r_eye.jpg", roi_r_eye)
-    face_mesh.close()
-    
-    return roi_face, roi_l_eye, roi_r_eye, face_mask
 
+        return roi_face, roi_l_eye, roi_r_eye, face_mask
+    else: 
+        return None, None, None, None
 
 
 def headpose_est(frame):
@@ -267,59 +263,72 @@ def test_webcam(model, id):
         frame.flags.writeable = False
         frame = imutils.resize(frame, width=500)
         data_from_frame = get_all_detections(frame)
-        
-        eye_left, eye_right, roi_face, face_mask = data_from_frame
-        # print(f"Type of eye_left: {type(eye_left)}, Type of eye_right: {type(eye_right)}, Type of roi_face: {type(roi_face)}")
 
-        roi_face = transformFace(Image.fromarray(roi_face))
-        eye_left = transformEyeL(Image.fromarray(eye_left))
-        eye_right = transformEyeR(Image.fromarray(eye_right))
-        face_mask = np.expand_dims(face_mask, 0)
+        if data_from_frame[0] is not None:
+            eye_left, eye_right, roi_face, face_mask = data_from_frame
+            # print(f"Type of eye_left: {type(eye_left)}, Type of eye_right: {type(eye_right)}, Type of roi_face: {type(roi_face)}")
 
-        # print(f"Type of eye_left: {type(eye_left)}, Type of eye_right: {type(eye_right)}, Type of roi_face: {type(roi_face)}")
-        
-        eye_left_t = torch.unsqueeze(eye_left, 0)
-        eye_right_t = torch.unsqueeze(eye_right, 0)
-        face_t = torch.unsqueeze(roi_face, 0)  
-        face_mask_t = torch.FloatTensor(face_mask)
+            roi_face = transformFace(Image.fromarray(roi_face))
+            eye_left = transformEyeL(Image.fromarray(eye_left))
+            eye_right = transformEyeR(Image.fromarray(eye_right))
+            face_mask = np.expand_dims(face_mask, 0)
 
-        frame.flags.writeable = True
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            # print(f"Type of eye_left: {type(eye_left)}, Type of eye_right: {type(eye_right)}, Type of roi_face: {type(roi_face)}")
+            
+            eye_left_t = torch.unsqueeze(eye_left, 0)
+            eye_right_t = torch.unsqueeze(eye_right, 0)
+            face_t = torch.unsqueeze(roi_face, 0)  
+            face_mask_t = torch.FloatTensor(face_mask)
 
-        output = model(face_t, eye_left_t, eye_right_t, face_mask_t)
-        predicted_pose = output.detach().cpu().numpy()[0]
+            frame.flags.writeable = True
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-        headpose_est(frame)
+            output = model(face_t, eye_left_t, eye_right_t, face_mask_t)
+            predicted_pose = output.detach().cpu().numpy()[0]
 
-        # left_x, left_y, left_w, left_h = left_eye_bounding_box
-        # right_x, right_y, right_w, right_h = right_eye_bounding_box
-        # frame = cv2.rectangle(frame, (left_x, left_y), (left_x + left_w, left_y + left_h), (0, 255, 0), 2)
-        # frame = cv2.rectangle(frame, (right_x, right_y), (right_x + right_w, right_y + right_h), (0, 255, 0), 2)
 
-        # frame = cv2.resize(frame, (one_size, one_size))
-        # frame = cv2.circle(frame, (center[0] + int(predicted_pose[0][0]), center[1] + int(predicted_pose[0][1])), 5, (0, 255, 0), -1)
-        print(predicted_pose)
-        
-        
-        x_gaze_min, x_gaze_max = -10, 14
-        y_gaze_min, y_gaze_max = -14, 14
+            # left_x, left_y, left_w, left_h = left_eye_bounding_box
+            # right_x, right_y, right_w, right_h = right_eye_bounding_box
+            # frame = cv2.rectangle(frame, (left_x, left_y), (left_x + left_w, left_y + left_h), (0, 255, 0), 2)
+            # frame = cv2.rectangle(frame, (right_x, right_y), (right_x + right_w, right_y + right_h), (0, 255, 0), 2)
 
-        pygame_x = int((-1*predicted_pose[0] - x_gaze_min) / (x_gaze_max - x_gaze_min) * window_size[0])
-        pygame_y = int((-1*predicted_pose[1] - y_gaze_min) / (y_gaze_max - y_gaze_min) * window_size[1])
+            # frame = cv2.resize(frame, (one_size, one_size))
+            # frame = cv2.circle(frame, (center[0] + int(predicted_pose[0][0]), center[1] + int(predicted_pose[0][1])), 5, (0, 255, 0), -1)
+            print(predicted_pose)
+            
+            
+            x_gaze_min, x_gaze_max = -10, 14
+            y_gaze_min, y_gaze_max = -14, 14
 
-        # dot_position = [int((-1* predicted_pose[0] + 13) / (13 + 13) * window_size[0]), int((-1*predicted_pose[1] + 13) / (13 + 13) * window_size[1])]
-        dot_position = [pygame_x, pygame_y]
-        print(predicted_pose[0], predicted_pose[1], dot_position)
-        screen.fill((255, 255, 255))
-        pygame.draw.circle(screen, dot_color, dot_position, dot_radius)
+            pygame_x = int((-1*predicted_pose[0] - x_gaze_min) / (x_gaze_max - x_gaze_min) * window_size[0])
+            pygame_y = int((-1*predicted_pose[1] - y_gaze_min) / (y_gaze_max - y_gaze_min) * window_size[1])
 
-        # Draw thin grey lines for x and y axes
-        pygame.draw.line(screen, grey, (0, window_size[1] // 2), (window_size[0], window_size[1] // 2), 1)
-        pygame.draw.line(screen, grey, (window_size[0] // 2, 0), (window_size[0] // 2, window_size[1]), 1)
+            dot_position = [pygame_x, pygame_y]
+            screen.fill((255, 255, 255))
+            pygame.draw.circle(screen, dot_color, dot_position, dot_radius)
+
+            # Draw thin grey lines for x and y axes
+            pygame.draw.line(screen, grey, (0, window_size[1] // 2), (window_size[0], window_size[1] // 2), 1)
+            pygame.draw.line(screen, grey, (window_size[0] // 2, 0), (window_size[0] // 2, window_size[1]), 1)     
+
+        else:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.8
+            font_thickness = 2
+            text_color = (0, 0, 255)
+            cv2.putText(frame, "No face detected", (10, 30), font, font_scale, text_color, font_thickness)
+            screen.fill((255, 255, 255))
+
+            no_gaze_text = "No gaze detection"
+            font = pygame.font.Font(None, 36)
+            text = font.render(no_gaze_text, True, (255, 0, 0))  # Red text
+            text_rect = text.get_rect(center=(window_size[0] // 2, window_size[1] // 2))
+            screen.blit(text, text_rect)
 
         pygame.display.flip()
-        clock.tick(60)       
+        clock.tick(60)
 
+        headpose_est(frame)
         cv2.imshow("Gaze point", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
