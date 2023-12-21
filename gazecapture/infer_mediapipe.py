@@ -15,11 +15,12 @@ import cv2
 import argparse
 import pygame
 import sys
+import scipy.ndimage
 
 from ITrackerModel import ITrackerModel
 
-CHECKPOINTS_PATH = 'C:/Users/Anja/kod/fixing-gazecapture-master'
-# CHECKPOINTS_PATH = 'C:/Users/Anja/kod/GazeCapture-master/pytorch'
+# CHECKPOINTS_PATH = 'C:/Users/Anja/kod/fixing-gazecapture-master'
+CHECKPOINTS_PATH = 'C:/Users/Anja/kod/GazeCapture-master/pytorch'
 # CHECKPOINTS_PATH = 'C:/Users/Anja/kod/gaze_drugi_laptop/zip'
 
 # from canonical_face_model_uv_visualization - Mediapipe incides for face mesh
@@ -39,12 +40,13 @@ pygame.display.set_caption("Gaze Tracking Dot")
 
 # Set up the dot
 dot_radius = 10
-dot_color = (255, 0, 0)  # Red color, you can adjust this
+dot_color = (255, 0, 0) 
 dot_position = [0, 0]  # Initial position
 
 grey = (192, 192, 192)
 
 clock = pygame.time.Clock()
+
 
 class SubtractMean(object):
     def __init__(self, meanImg):
@@ -244,12 +246,69 @@ def headpose_est(frame):
         cv2.line(frame, tuple(np.ravel(r_axis[0]).astype(np.int32)), tuple(np.ravel(r_axis[1]).astype(np.int32)), (0, 200, 0), 3)
         cv2.line(frame, tuple(np.ravel(r_axis[1]).astype(np.int32)), tuple(np.ravel(r_axis[2]).astype(np.int32)), (0, 0, 200), 3)
 
+def kalman_init(dt, init=None):
+    if init is None :
+        x = np.matrix([[0.0, 0.0, 0.0, 0.0]]).T
+    else:
+        x = init
+    
+    P = np.matrix([[0.01, 0.0, 0.0, 0.0],
+                   [0.0, 0.01, 0.0, 0.0],
+                   [0.0, 0.0, 7.0, 0.0],
+                   [0.0, 0.0, 0.0, 7.0]])
+    
+    A = np.matrix([[1.0, 0.0, dt, 0.0],
+                   [0.0, 1.0, 0.0, dt],
+                   [0.0, 0.0, 1.0, 0.0],
+                   [0.0, 0.0, 0.0, 1.0]])
+    
+    sj = 0.2
+    Q = np.matrix([[(dt**4)/4, 0, (dt**3)/2, 0],
+               [0, (dt**4)/4, 0, (dt**3)/2],
+               [(dt**3)/2, 0, dt**2, 0],
+               [0, (dt**3)/2, 0, dt**2]]) * sj**2
+    I = np.eye(4)
+
+    return x, P, A, Q, I 
+    
+
+def distance(x1, x2, y1, y2):
+    return np.sqrt((x1-x2)**2 + (y1-y2)**2)
+
+
+def gaus(x, y, num, sigma):
+    if len(x) > num:
+        recent_x = x[-num:]
+        recent_y = y[-num:]
+    else:
+        recent_x = x
+        recent_y = y
+    
+    x = scipy.ndimage.gaussian_filter(recent_x, sigma)
+    y = scipy.ndimage.gaussian_filter(recent_y, sigma)
+
+    return x[-1], y[-1]
 
 
 def test_webcam(model, id):
     video_capture = cv2.VideoCapture(id)
 
+    fps = video_capture.get(cv2.CAP_PROP_FPS)
+    state, P, A, Q, I = kalman_init(1/fps)
+    xt = []
+    yt = []
+    dxt= []
+    dyt= []
+    x_measured = []
+    y_measured = []
+    threshold = 3
+    predicted_pose = np.array([0, 0])
+    q=0
+    x_gaus = []
+    y_gaus = []
+
     while (True):
+        q+=1
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -258,7 +317,7 @@ def test_webcam(model, id):
         if not ret:
             print("Camera doesn't work.")
             break
-
+        
         frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
         frame.flags.writeable = False
         frame = imutils.resize(frame, width=500)
@@ -284,6 +343,8 @@ def test_webcam(model, id):
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
             output = model(face_t, eye_left_t, eye_right_t, face_mask_t)
+
+            previous = predicted_pose
             predicted_pose = output.detach().cpu().numpy()[0]
 
 
@@ -295,13 +356,62 @@ def test_webcam(model, id):
             # frame = cv2.resize(frame, (one_size, one_size))
             # frame = cv2.circle(frame, (center[0] + int(predicted_pose[0][0]), center[1] + int(predicted_pose[0][1])), 5, (0, 255, 0), -1)
             print(predicted_pose)
-            
-            
+
+            # This part is Kalman filtering of the gaze
+            predicted_value = predicted_pose.reshape(-1, 1)
+
+            x_measured.append(float(predicted_pose[0]))
+            y_measured.append(float(predicted_pose[1]))
+
+            # Apply Gaussian filter to the measurements
+            xg, yg = gaus(x_measured, y_measured, 5, 2)
+
+            if q % 10 == 0 :
+                state, P, A, Q, I = kalman_init(1/fps, state)
+                
+            state = A * state
+            P = A * P * A.T + Q 
+            # Measurement Update (Correction)q
+            H = np.matrix([[1.6, 0.0, 0.0, 0.0],
+                        [0.0, 1.6, 0.0, 0.0]])
+            # Measurement covariance matrix R - assuming some measurement noise
+            measurement_noise = 1.0
+            R = np.matrix([[measurement_noise, 0.0],
+                        [0.0, measurement_noise]])
+            # Compute the Kalman Gain
+            S = H * P * H.T + R
+            K = (P * H.T) * np.linalg.pinv(S)
+            # Update the estimate via z
+            Z = predicted_value.reshape(H.shape[0], 1)
+            y = Z - (H * state)
+            state = state + (K * y)
+            # Update the error covariance
+            P = (I - (K * H)) * P  
+
+            # Dynamic selection of the filter or the measurement
+            change = distance(predicted_pose[0], previous[0], predicted_pose[1], previous[1])
+            if change > threshold:
+                x = state[0]
+                y = state[1]
+            else:
+                # x = predicted_pose[0]
+                # y = predicted_pose[1]    
+                x = xg
+                y = yg
+                x_gaus.append(xg)
+                y_gaus.append(yg)
+
+            xt.append(float(state[0]))
+            yt.append(float(state[1]))
+            dxt.append(float(state[2]))
+            dyt.append(float(state[3]))
+
+            # This part is for displaying the result of the gaze
             x_gaze_min, x_gaze_max = -10, 14
             y_gaze_min, y_gaze_max = -14, 14
 
-            pygame_x = int((-1*predicted_pose[0] - x_gaze_min) / (x_gaze_max - x_gaze_min) * window_size[0])
-            pygame_y = int((-1*predicted_pose[1] - y_gaze_min) / (y_gaze_max - y_gaze_min) * window_size[1])
+            pygame_x = int((-1*x - x_gaze_min) / (x_gaze_max - x_gaze_min) * window_size[0])
+            pygame_y = int((-1*y - y_gaze_min) / (y_gaze_max - y_gaze_min) * window_size[1])
 
             dot_position = [pygame_x, pygame_y]
             screen.fill((255, 255, 255))
@@ -309,8 +419,8 @@ def test_webcam(model, id):
 
             # Draw thin grey lines for x and y axes
             pygame.draw.line(screen, grey, (0, window_size[1] // 2), (window_size[0], window_size[1] // 2), 1)
-            pygame.draw.line(screen, grey, (window_size[0] // 2, 0), (window_size[0] // 2, window_size[1]), 1)     
-
+            pygame.draw.line(screen, grey, (window_size[0] // 2, 0), (window_size[0] // 2, window_size[1]), 1) 
+            
         else:
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.8
@@ -329,10 +439,44 @@ def test_webcam(model, id):
         clock.tick(60)
 
         headpose_est(frame)
+
         cv2.imshow("Gaze point", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
+    # Plotting
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(16,9))
+
+    plt.subplot(211)
+    plt.step(range(len(dxt)), dxt, label='$\dot x$')
+    plt.step(range(len(dxt)), dyt, label='$\dot y$')
+    plt.title('Velocity Estimate')
+    plt.legend(loc='best')
+    plt.ylabel('Velocity')
+
+    plt.subplot(212)
+    plt.step(range(len(xt)), xt, label='$x$')
+    plt.step(range(len(yt)), yt, label='$y$')
+    plt.xlabel('Filter Step')
+    plt.ylabel('Position')
+    plt.legend(loc='best')
+    plt.title('Position Estimate')
+    plt.savefig('estimations.png')
+    plt.show()
+
+
+    plt.scatter(x_measured, y_measured, label='Measured', marker='o')  # Use 'o' marker for measured points
+    plt.scatter(xt, yt, label='Kalman estimated', color='red', marker='x')  # Use 'x' marker for estimated points
+    plt.scatter(x_gaus, y_gaus, label='Gaussian', color='green', marker='p')
+    # plt.scatter(xt, yt, label='Position')
+    plt.xlabel('$x$')
+    plt.ylabel('$y$')
+    plt.title('Measured and Estimated Gaze Positions')
+    plt.legend()
+
+    plt.savefig('difference.png')
+    plt.show()
     video_capture.release()
     cv2.destroyAllWindows()
 
@@ -367,7 +511,7 @@ else:
 
 # my phone link -> 'http://10.10.104.56:8080/video'
 parser = argparse.ArgumentParser()
-parser.add_argument('id', type=str, help='Are you using wecam or phone')
+parser.add_argument('id', type=str, help='Are you using webcam or phone')
 args = parser.parse_args()
 
 if args.id == '1' or args.id == '0' or args.id == '2':
