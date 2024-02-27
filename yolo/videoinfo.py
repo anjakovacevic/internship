@@ -4,26 +4,30 @@ from supervision import VideoInfo
 import cv2
 import numpy as np
 
-BULEVAR = r"C:\Users\anja.kovacevic\kod\yolo\bulevar.mp4"
-TARGET = r"C:\Users\anja.kovacevic\kod\yolo\bulevar_target3.mp4"
+BULEVAR = r"C:\Users\anja.kovacevic\datasets_and_models\bulevar.mp4"
+TARGET = r"C:\Users\anja.kovacevic\datasets_and_models\bulevar_target4.mp4"
 
-model = YOLO('yolov8s.pt')
+model = YOLO("yolov8s.pt")
 
-video_info=VideoInfo.from_video_path(video_path=BULEVAR)
+video_info = VideoInfo.from_video_path(video_path=BULEVAR)
 # print("Video info: ", video_info)
 # VideoInfo(width=1920, height=1080, fps=30, total_frames=1841)
-polygon = np.array([
-    [380, 170],
-    [380, 750],
-    [1920, 750],
-    [1920, 170],
-])
+polygon = np.array(
+    [
+        [380, 170],
+        [380, 750],
+        [1920, 750],
+        [1920, 170],
+    ]
+)
 zone = sv.PolygonZone(polygon=polygon, frame_resolution_wh=video_info.resolution_wh)
 
 # initiate annotators
 box_annotator = sv.BoxAnnotator(thickness=4, text_thickness=4, text_scale=2)
-zone_annotator = sv.PolygonZoneAnnotator(zone=zone, color=sv.Color.white(), thickness=6, text_thickness=6, text_scale=4)
-'''
+zone_annotator = sv.PolygonZoneAnnotator(
+    zone=zone, color=sv.Color.white(), thickness=6, text_thickness=6, text_scale=4
+)
+"""
 # extract video frame
 # every frame is a numpy array
 generator = sv.get_video_frames_generator(BULEVAR)
@@ -52,7 +56,8 @@ frame = zone_annotator.annotate(scene=frame)
 import matplotlib.pyplot as plt 
 
 sv.plot_image(frame, (12, 6))
-'''
+"""
+
 
 def process_frame(frame: np.ndarray, _) -> np.ndarray:
     # detect
@@ -63,7 +68,7 @@ def process_frame(frame: np.ndarray, _) -> np.ndarray:
 
     # annotate
     box_annotator = sv.BoxAnnotator(thickness=4, text_thickness=4, text_scale=2)
-    labels=[]
+    labels = []
 
     for confidence, class_id in zip(detections.confidence, detections.class_id):
         # Retrieve the class name from YOLO model names
@@ -75,6 +80,7 @@ def process_frame(frame: np.ndarray, _) -> np.ndarray:
     frame = zone_annotator.annotate(scene=frame)
 
     return frame
+
 
 sv.process_video(source_path=BULEVAR, target_path=TARGET, callback=process_frame)
 

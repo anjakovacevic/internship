@@ -1,0 +1,3 @@
+# Razumevanje ROS2 
+Beleške vezane za ROS2 i foldere iz ovog direktorijuma mogu se naći na [linku](https://www.notion.so/Praksa-beleske-476b08fb8d0b468da9ef1cfd95358cb2?pvs=4).
+Objašnjeni su: instalacija, pokretanje projekata, osnovni koncepti...

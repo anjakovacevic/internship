@@ -51,7 +51,9 @@ python infer_mediapipe.py 1
 - `SubtractMean`: Klasa transformacije koja normalizuje slike.
 
 - `transformFace`, `transformEyeL`, `transformEyeR`: Transformacije slika za lice i oči za pripremu za model.
-- `checkpoint.pth`: Možete odabrati model iz foldera anja, og i fix u zavisnosti od toga koji želite da koristite. 
+- `checkpoint.pth`: Možete odabrati model iz foldera anja, og i fix u zavisnosti od toga koji želite da koristite.
+- `Kalman filter` : Efikasno filtrira šum iz sirovih podataka o pogledu.
+- `Gaussian filter` : Za neku vrstu interpolacije tačaka merenja, radi smanjenja trzavosti i nepredvidivih pokreta u putanji pogleda.
 
 #### Pomoćne Funkcije
 - `get_face_boundaries`: Identifikuje okvir lica na slici.
@@ -75,6 +77,18 @@ python infer_mediapipe.py 1
 - Koristi MediaPipe za detekciju obeležja lica i očiju.
 - Izlaz modela predstavlja predviđeni smer pogleda.
 
+### infer_basler_mediapipe.py
+U poslednjem azuriranju koda dodata je podrska za nove BASLER kamere. Ova skripta se vodi istom logikom kao i infer_mediapipe.py, ali se poziva razlicitim argumentima.
+
+```bash
+python infer_basler_mediapipe.py webcam 1
+```
+1. argument = `webcam`, `basler`, `phone` 
+2. argument postoji samo u slucaju koriscenja web kamere ili telefona.      
+    - `0` default webcam; ona koja je ugrađena u uređaj najčešće.
+    - `1, 2, 3...` redni brojevi eksternih kamera.
+    - u slučaju korišćenja kamere mobilnog telefona potrebno je instalirati aplikaciju IP Webcam, pokrenuti server na njoj i pročitati link za pristup iz aplikacije - na primer: `http://10.10.104.56:8080/video`.
+
 ## Zašto MediaPipe?
 
 MediaPipe, modeli razvijeni od strane Google, izabran je zbog svoje superiornosti u detekciji obeležja lica, posebno u poređenju sa drugim opcijama poput dlib i Haar iz OpenCV. Razlozi za izbor MediaPipe-a uključuju:
@@ -86,6 +100,18 @@ MediaPipe, modeli razvijeni od strane Google, izabran je zbog svoje superiornost
 - **Robusnost u Različitim Uslovima**: MediaPipe pokazuje snažne performanse u različitim uslovima osvetljenja i orijentacija lica.
 
 Ukratko, kombinacija tačnosti, brzine i efikasnosti čini MediaPipe preferiranim izborom za projekat praćenja pogleda, posebno gde je obrada u realnom vremenu od suštinskog značaja.
+
+## Kalmanov Filter 
+Kalmanov Filter je algoritam koji koristi niz merenja zapaženih tokom vremena, koji sadrže statistički šum i druge nepreciznosti, i proizvodi procene nepoznatih varijabli koje su preciznije od onih zasnovanih samo na jednom merenju.
+Filter procenjuje stanje sistema ažurirajući predviđanja pomoću ponderisanog proseka, gde težine daju nesigurnost svake procene.
+U ovom sistemu, filter je inicijalizovan sa matricom stanja (x), matricom kovarijance greške (P), matricom prelaza stanja (A), kovarijansom šuma procesa (Q) i identičnom matricom (I).
+Filter prolazi kroz dve faze: Predviđanje i Ažuriranje. U fazi predviđanja, filter koristi model sistema za predviđanje sledećeg stanja i kovarijansi greške. Tokom faze ažuriranja, inkorporira novo merenje u ova predviđanja kako bi precizirao svoje procene.
+
+## Gaussian Smoothing
+Gausovo izglađivanje se koristi za izglađivanje podataka o pogledu u realnom vremenu, smanjujući trzavost i nepredvidive pokrete u putanji pogleda. Posebno je korisno za stvaranje prirodnijeg i manje ometajućeg korisničkog iskustva.
+Ono je tehnika koja primenjuje Gausov kernel na niz podataka kako bi se dobila izglađena verzija.
+Funkcioniše tako što traži prosek svake tačke sa njenim susedima, pri čemu težine opadaju kako su susedi dalji od tačke. Stepenu izglađivanja upravlja standardna devijacija (sigma) Gausove raspodele.
+U našoj implementaciji, primenjujemo Gausovo izglađivanje na podskupu najnovijih merenja pogleda. Ovaj pristup osigurava da je smer pogleda izglađen bez značajnog kašnjenja, održavajući odzivnost sistema.
 
 ## Korišćenje Detekcije Pogleda u Vozilima
 
@@ -116,3 +142,11 @@ Ukupno gledano, detekcija pogleda u vozilima predstavlja značajan korak ka pame
 - **Uslovi Osvetljenja**: Osvetljenje u vozilu može biti izazovno (tamno unutra, svetlo spolja, brzine promene osvetljenja tokom vožnje,..). Rešenja uključuju, na primer, ručnu kontrolu ekspozicije da se spreče previše tamne ili svetle regije lica.
 - **Pozicioniranje Kamere**: Postavljanje kamere centralno, na primer pored/iznad volana, može poboljšati tačnost.
 
+## Literatura
+[1] [Eye Tracking for Everyone](https://paperswithcode.com/paper/eye-tracking-for-everyone), Kyle Kafka et al.
+
+[2] [Kalman Filtering in the Design of Eye-Gaze-Guided Computer Interfaces](https://www.semanticscholar.org/paper/Kalman-Filtering-in-the-Design-of-Eye-Gaze-Guided-Komogortsev-Khan/f17185f549b0ae6a3de6230ebf7ce481c4d92d73),Oleg V. Komogortsev, J. Khan
+
+[3] [ETH-XGaze](https://paperswithcode.com/dataset/eth-xgaze),Zhang et al.
+
+[4] [The Story in Your Eyes: An Individual-difference-aware Model for Cross-person Gaze Estimation](https://arxiv.org/abs/2106.14183), Jun Bao, Buyu Liu, Jun Yu
